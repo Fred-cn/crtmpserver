@@ -155,14 +155,18 @@ bool ReadSPSVUI(BitArray &ba, Variant &v) {
 }
 
 bool scaling_list(BitArray &ba, uint8_t sizeOfScalingList) {
-	uint32_t nextScale = 8;
-	uint32_t lastScale = 8;
-	uint64_t delta_scale = 0;
+	int64_t nextScale = 8;
+	int64_t lastScale = 8;
+	int64_t delta_scale = 0;
 	for (uint8_t j = 0; j < sizeOfScalingList; j++) {
 		if (nextScale != 0) {
-			if (!ba.ReadExpGolomb(delta_scale))
+			if (!ba.ReadSExpGolomb(delta_scale))
 				return false;
-			nextScale = (lastScale + delta_scale + 256) % 256;
+			nextScale = (lastScale + delta_scale) & 0xFF;
+		}
+		if (!j && !nextScale)
+		{
+			break;
 		}
 		lastScale = (nextScale == 0) ? lastScale : nextScale;
 	}
@@ -176,19 +180,29 @@ bool ReadSPS(BitArray &ba, Variant &v) {
 	READ_BOOL("constraint_set0_flag");
 	READ_BOOL("constraint_set1_flag");
 	READ_BOOL("constraint_set2_flag");
-	READ_INT("reserved_zero_5bits", uint8_t, 5);
+	READ_BOOL("constraint_set3_flag");
+	READ_BOOL("constraint_set4_flag");
+	READ_BOOL("constraint_set5_flag");
+	READ_INT("reserved_zero_2bits", uint8_t, 2);
 	READ_INT("level_idc", uint8_t, 8);
 	READ_EG("seq_parameter_set_id", uint64_t);
-	if ((uint64_t) v["profile_idc"] >= 100) {
+	uint64_t profile_idc = (uint64_t)v["profile_idc"];
+	if (profile_idc == 100 || profile_idc == 110 || profile_idc == 122
+		|| profile_idc == 244 || profile_idc == 44 || profile_idc == 83
+		|| profile_idc == 86 || profile_idc == 118 || profile_idc == 128
+		|| profile_idc == 138 || profile_idc == 144) {
 		READ_EG("chroma_format_idc", uint64_t);
-		if ((uint64_t) v["chroma_format_idc"] == 3)
+		uint8_t count = 8;
+		if ((uint64_t)v["chroma_format_idc"] == 3) {
 			READ_BOOL("residual_colour_transform_flag");
+			count = 12;
+		}
 		READ_EG("bit_depth_luma_minus8", uint64_t);
 		READ_EG("bit_depth_chroma_minus8", uint64_t);
 		READ_BOOL("qpprime_y_zero_transform_bypass_flag");
 		READ_BOOL("seq_scaling_matrix_present_flag");
 		if ((bool)v["seq_scaling_matrix_present_flag"]) {
-			for (uint8_t i = 0; i < 8; i++) {
+			for (uint8_t i = 0; i < count; i++) {
 				uint8_t flag = 0;
 				CHECK_BA_LIMITS("seq_scaling_list_present_flag", 1);
 				flag = ba.ReadBits<uint8_t > (1);
@@ -677,7 +691,7 @@ bool VideoCodecInfoH264::Init(uint8_t *pSPS, uint32_t spsLength, uint8_t *pPPS,
 	_type = CODEC_VIDEO_H264;
 
 	BitArray spsBa;
-	//remove emulation_prevention_three_byte
+	//remove emulation_prevention_three_byte.(EBSP to RBSP)
 	for (uint32_t i = 1; i < _spsLength; i++) {
 		if (((i + 2)<(_spsLength - 1))
 				&& (_pSPS[i + 0] == 0)
@@ -966,7 +980,7 @@ bool VideoCodecInfoH265::Init(uint8_t *pData,
 	}
 	_pData = new uint8_t[_dLength];
 	memcpy(_pData, pData, _dLength);
-
+	return true;
 #if 0
 	_spsLength = spsLength;
 	if (_pSPS != NULL) {
